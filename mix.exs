@@ -6,8 +6,8 @@ defmodule Geocoder.Mixfile do
       app: :geocoder,
       description: "A simple, efficient geocoder/reverse geocoder with a built-in cache.",
       version: "1.0.0",
-      elixir: "~> 1.2",
-      otp: "~> 20",
+      elixir: "~> 1.8",
+      otp: "~> 22",
       package: package(),
       build_embedded: Mix.env() == :prod,
       start_permanent: Mix.env() == :prod,
@@ -37,11 +37,11 @@ defmodule Geocoder.Mixfile do
   defp deps do
     [
       {:httpoison, "~> 1.5"},
-      {:poison, "~> 4.0"},
+      {:poison, "~> 3.1"},
       {:towel, "~> 0.2"},
       {:poolboy, "~> 1.5"},
       {:geohash, "~> 1.2"},
-      {:ex_doc, "~> 0.18.0", only: :dev},
+      {:ex_doc, "~> 0.20.0", only: :dev},
       {:inch_ex, ">= 0.0.0", only: :docs},
       {:excoveralls, "~> 0.6.3", only: :test}
     ]
