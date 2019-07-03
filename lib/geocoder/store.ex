@@ -34,15 +34,30 @@ defmodule Geocoder.Store do
 
   # Fetch geocode
   def handle_call({:geocode, location}, _from, {links, store, _} = state) do
-    key = encode(location)
-    result = Maybe.wrap(links) |> fmap(&Map.get(&1, key)) |> fmap(&Map.get(store, &1))
+    link = encode(location)
+
+    result =
+      with %{^link => key} <- links,
+           %{^key => coords} <- store do
+        {:just, coords}
+      else
+        _ -> :nothing
+      end
+
     {:reply, result, state}
   end
 
   # Fetch reverse geocode
   def handle_call({:reverse_geocode, latlon}, _from, {_, store, opts} = state) do
     key = encode(latlon, opts[:precision])
-    result = Maybe.wrap(store) |> fmap(&Map.get(&1, key))
+
+    result =
+      with %{^key => coords} <- store do
+        {:just, coords}
+      else
+        _ -> :nothing
+      end
+
     {:reply, result, state}
   end
 
