@@ -5,7 +5,7 @@ defmodule Geocoder.Mixfile do
     [
       app: :geocoder,
       description: "A simple, efficient geocoder/reverse geocoder with a built-in cache.",
-      version: "1.0.0",
+      version: "1.0.1",
       elixir: "~> 1.8",
       otp: "~> 22",
       package: package(),
