@@ -1,87 +1,17 @@
 defmodule Geocoder.Providers.OpenCageData do
-  use HTTPoison.Base
-  use Towel
+  use Tesla
 
-  @endpoint "http://api.opencagedata.com/"
-  @path "geocode/v1/json"
+  plug(Tesla.Middleware.BaseUrl, "https://maps.googleapis.com")
 
-  def geocode(opts) do
-    request(@path, opts |> extract_opts())
-    |> fmap(&parse_geocode/1)
-  end
+  plug(Tesla.Middleware.Query,
+    key: Application.fetch_env!(:geocoder, Geocoder.Providers.OpenCageData)[:key],
+    pretty: 1
+  )
 
-  def geocode_list(opts) do
-    request_all(@path, opts |> extract_opts())
-    |> fmap(fn r -> Enum.map(r, &parse_geocode/1) end)
-  end
+  plug(Tesla.Middleware.JSON)
 
-  def reverse_geocode(opts) do
-    request(@path, opts |> extract_opts())
-    |> fmap(&parse_reverse_geocode/1)
-  end
-
-  def reverse_geocode_list(opts) do
-    request_all(@path, opts |> extract_opts())
-    |> fmap(fn r -> Enum.map(r, &parse_reverse_geocode/1) end)
-  end
-
-  defp extract_opts(opts) do
-    opts
-    |> Keyword.merge(opts)
-    |> Keyword.put(
-      :q,
-      case opts |> Keyword.take([:address, :latlng]) |> Keyword.values() do
-        [{lat, lon}] -> "#{lat},#{lon}"
-        [query] -> query
-        _ -> nil
-      end
-    )
-    |> Keyword.take([
-      :q,
-      :key,
-      :bounds,
-      :language,
-      :add_request,
-      :countrycode,
-      :jsonp,
-      :limit,
-      :min_confidence,
-      :no_annotations,
-      :no_dedupe,
-      :pretty
-    ])
-  end
-
-  defp parse_geocode(response) do
-    coords = geocode_coords(response)
-    bounds = geocode_bounds(response)
-    location = geocode_location(response)
-    %{coords | bounds: bounds, location: location}
-  end
-
-  defp parse_reverse_geocode(response) do
-    coords = geocode_coords(response)
-    location = geocode_location(response)
-    %{coords | location: location}
-  end
-
-  defp geocode_coords(%{"geometry" => coords}) do
-    %{"lat" => lat, "lng" => lon} = coords
-    %Geocoder.Coords{lat: lat, lon: lon}
-  end
-
-  defp geocode_bounds(%{"bounds" => bounds}) do
-    %{
-      "northeast" => %{"lat" => north, "lng" => east},
-      "southwest" => %{"lat" => south, "lng" => west}
-    } = bounds
-
-    %Geocoder.Bounds{top: north, right: east, bottom: south, left: west}
-  end
-
-  defp geocode_bounds(_), do: %Geocoder.Bounds{}
-
-  @map %{
+  @path_geocode "/geocode/v1/json"
+  @field_mapping %{
     "house_number" => :street_number,
     "road" => :street,
     "city" => :city,
@@ -91,40 +21,82 @@ defmodule Geocoder.Providers.OpenCageData do
     "country" => :country,
     "country_code" => :country_code
   }
-  defp geocode_location(%{"components" => components, "formatted" => formatted_address}) do
-    reduce = fn {type, name}, location ->
-      struct(location, [{@map[type], name}])
+
+  def geocode(opts) do
+    with {:ok, %Tesla.Env{status: 200, body: body}} <-
+           get(@path_geocode, query: build_request_params(opts)) do
+      body |> transform_response()
+    else
+      _ -> :error
     end
+  end
 
-    location = %Geocoder.Location{formatted_address: formatted_address}
+  defdelegate reverse_geocode(opts), to: __MODULE__, as: :geocode
 
+  defp build_request_params(opts) do
+    opts
+    |> Keyword.take([
+      :bounds,
+      :language,
+      :add_request,
+      :countrycode,
+      :jsonp,
+      :limit,
+      :min_confidence,
+      :no_annotations,
+      :no_dedupe
+    ])
+    |> Keyword.put(
+      :q,
+      case opts |> Keyword.take([:address, :latlng]) |> Keyword.values() do
+        [{lat, lon}] -> "#{lat},#{lon}"
+        [query] -> query
+        _ -> nil
+      end
+    )
+  end
+
+  def transform_response(%{"results" => [result | _]}) do
+    coords = retrieve_coords(result)
+    bounds = retrieve_bounds(result)
+    location = retrieve_location(result)
+
+    {:ok, %{coords | bounds: bounds, location: location}}
+  end
+
+  defp retrieve_coords(%{
+         "geometry" => %{
+           "lat" => lat,
+           "lng" => lon
+         }
+       }) do
+    %Geocoder.Coords{lat: lat, lon: lon}
+  end
+
+  defp retrieve_location(%{"components" => components, "formatted" => formatted_address}) do
     components
-    |> Enum.reduce(location, reduce)
-    |> Map.drop([nil])
+    |> Enum.reduce(
+      %Geocoder.Location{formatted_address: formatted_address},
+      fn {type, value}, acc ->
+        struct(acc, [{@field_mapping[type], value}])
+      end
+    )
   end
 
-  defp request_all(path, params) do
-    httpoison_options = Application.get_env(:geocoder, Geocoder.Worker)[:httpoison_options] || []
-
-    case get(path, [], Keyword.merge(httpoison_options, params: Enum.into(params, %{}))) do
-      {:ok, %{status_code: 200, body: %{"results" => results}}} ->
-        {:ok, List.wrap(results)}
-
-      {_, response} ->
-        {:error, response}
-    end
+  defp retrieve_bounds(%{
+         "bounds" => %{
+           "northeast" => %{
+             "lat" => north,
+             "lng" => east
+           },
+           "southwest" => %{
+             "lat" => south,
+             "lng" => west
+           }
+         }
+       }) do
+    %Geocoder.Bounds{top: north, right: east, bottom: south, left: west}
   end
 
-  def request(path, params) do
-    request_all(path, params)
-    |> fmap(&List.first/1)
-  end
-
-  def process_url(url) do
-    @endpoint <> url
-  end
-
-  def process_response_body(body) do
-    body |> Poison.decode!()
-  end
+  defp retrieve_bounds(_), do: %Geocoder.Bounds{}
 end

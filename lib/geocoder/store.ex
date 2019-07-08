@@ -1,6 +1,5 @@
 defmodule Geocoder.Store do
   use GenServer
-  use Towel
 
   # Public API
   def geocode(opts) do

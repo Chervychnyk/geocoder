@@ -1,6 +1,5 @@
 defmodule Geocoder.Worker do
   use GenServer
-  use Towel
 
   # Public API
   def geocode(q, opts \\ []) do
@@ -69,15 +68,20 @@ defmodule Geocoder.Worker do
   end
 
   def run(function, conf, q, false) do
-    apply(conf[:provider], function, [additionnal_conf(q, conf)])
-    |> tap(&conf[:store].update/1)
-    |> tap(&conf[:store].link(q, &1))
+    with {:ok, %Geocoder.Coords{} = coords} = result <-
+           apply(conf[:provider], function, [additionnal_conf(q, conf)]),
+         _ <- conf[:store].update(coords),
+         _ <- conf[:store].link(q, coords) do
+      result
+    else
+      _ -> :nothing
+    end
   end
 
   def run(function, q, conf, true) do
     case apply(conf[:store], function, [additionnal_conf(q, conf)]) do
       {:just, coords} ->
-        ok(coords)
+        {:ok, coords}
 
       :nothing ->
         run(function, conf, q, false)

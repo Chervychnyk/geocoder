@@ -1,99 +1,103 @@
 defmodule Geocoder.Providers.OpenStreetMaps do
-  use HTTPoison.Base
-  use Towel
+  use Tesla
 
-  @endpoint "https://nominatim.openstreetmap.org/"
-  @endpath_reverse "/reverse"
-  @endpath_search "/search"
-  @defaults [format: "json", "accept-language": "en", addressdetails: 1]
+  plug(Tesla.Middleware.BaseUrl, "https://nominatim.openstreetmap.org/")
+
+  plug(Tesla.Middleware.Headers, [
+    {"user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3)"}
+  ])
+
+  plug(Tesla.Middleware.JSON)
+
+  @default_params [format: "json", "accept-language": "en", addressdetails: 1]
+  @field_mapping %{
+    "house_number" => :street_number,
+    "county" => :county,
+    "city" => :city,
+    "road" => :street,
+    "state" => :state,
+    "postcode" => :postal_code,
+    "country" => :country
+  }
+
+  @path_search "/search"
+  @path_reverse "/reverse"
 
   def geocode(opts) do
-    request(@endpath_search, extract_opts(opts))
-    |> fmap(&parse_geocode/1)
-  end
-
-  def geocode_list(opts) do
-    request_all(@endpath_search, extract_opts(opts))
-    |> fmap(fn
-      %{} = result -> [parse_geocode(result)]
-      r when is_list(r) -> Enum.map(r, &parse_geocode/1)
-    end)
+    with {:ok, %Tesla.Env{status: 200, body: body}} <-
+           get(@path_search, query: build_request_params(opts)) do
+      body |> transform_response()
+    else
+      _ -> :error
+    end
   end
 
   def reverse_geocode(opts) do
-    request(@endpath_reverse, extract_opts(opts))
-    |> fmap(&parse_reverse_geocode/1)
+    with {:ok, %Tesla.Env{status: 200, body: body}} <-
+           get(@path_reverse, query: build_request_params(opts)) do
+      body |> transform_response()
+    else
+      _ -> :error
+    end
   end
 
-  def reverse_geocode_list(opts) do
-    request_all(@endpath_search, extract_opts(opts))
-    |> fmap(fn
-      %{} = result -> [parse_reverse_geocode(result)]
-      r when is_list(r) -> Enum.map(r, &parse_reverse_geocode/1)
-    end)
+  defp build_request_params(opts, params \\ @default_params)
+  defp build_request_params([], params), do: params
+
+  defp build_request_params([{:address, address} | opts], params) when is_list(params) do
+    opts |> build_request_params([{:q, address} | params])
   end
 
-  defp extract_opts(opts) do
-    @defaults
-    |> Keyword.merge(opts)
-    |> Keyword.update!(:"accept-language", fn default -> opts[:language] || default end)
-    |> Keyword.put(
-      :q,
-      case opts |> Keyword.take([:address, :latlng]) |> Keyword.values() do
-        [{lat, lon}] -> "#{lat},#{lon}"
-        [query] -> query
-        _ -> nil
-      end
-    )
-    |> Keyword.take(
-      [
-        :q,
-        :key,
-        :address,
-        :components,
-        :bounds,
-        :region,
-        :latlon,
-        :lat,
-        :lon,
-        :placeid,
-        :result_type,
-        :location_type
-      ] ++ Keyword.keys(@defaults)
-    )
+  defp build_request_params([{:latlng, {lat, lon}} | opts], params) when is_list(params) do
+    opts |> build_request_params([{:q, "#{lat},#{lon}"}, {:lat, lat}, {:lon, lon} | params])
   end
 
-  defp parse_geocode([]), do: :error
+  defp build_request_params([_ | opts], params), do: opts |> build_request_params(params)
 
-  defp parse_geocode(response) do
-    coords = geocode_coords(response)
-    bounds = geocode_bounds(response)
-    location = geocode_location(response)
-    %{coords | bounds: bounds, location: location}
+  defp transform_response([]), do: :error
+
+  defp transform_response([first_match | _]), do: transform_response(first_match)
+
+  defp transform_response(%{} = response) do
+    coords = retrieve_coords(response)
+    location = retrieve_location(response)
+    bounds = retrieve_bounds(response)
+
+    {:ok, %{coords | location: location, bounds: bounds}}
   end
 
-  defp parse_reverse_geocode([]), do: :error
-
-  defp parse_reverse_geocode(response) do
-    coords = geocode_coords(response)
-    bounds = geocode_bounds(response)
-    location = geocode_location(response)
-    %{coords | bounds: bounds, location: location}
-  end
-
-  defp geocode_coords(%{"lat" => lat, "lon" => lon}) do
+  defp retrieve_coords(%{"lat" => lat, "lon" => lon}) do
     [lat, lon] = [lat, lon] |> Enum.map(&String.to_float(&1))
     %Geocoder.Coords{lat: lat, lon: lon}
   end
 
-  defp geocode_coords(_), do: %Geocoder.Coords{}
+  defp retrieve_coords(_), do: %Geocoder.Coords{}
 
-  defp geocode_bounds(%{"boundingbox" => bbox}) do
+  defp retrieve_bounds(%{"boundingbox" => bbox}) do
     [north, south, west, east] = bbox |> Enum.map(&String.to_float(&1))
     %Geocoder.Bounds{top: north, right: east, bottom: south, left: west}
   end
 
-  defp geocode_bounds(_), do: %Geocoder.Bounds{}
+  defp retrieve_bounds(_), do: %Geocoder.Bounds{}
+
+  defp retrieve_location(
+         %{
+           "address" => address
+         } = response
+       ) do
+    address
+    |> Enum.reduce(
+      %Geocoder.Location{
+        country_code: address["country_code"],
+        formatted_address: response["display_name"]
+      },
+      fn {field, value}, location ->
+        if Map.has_key?(@field_mapping, field),
+          do: location |> struct([{@field_mapping[field], value}]),
+          else: location
+      end
+    )
+  end
 
   # %{"address" =>
   #      %{"city" => "Ghent", "city_district" => "Wondelgem", "country" => "Belgium",
@@ -105,56 +109,4 @@ defmodule Geocoder.Providers.OpenStreetMaps do
   #   "licence" => "Data © OpenStreetMap contributors, ODbL 1.0. http://www.openstreetmap.org/copyright",
   #   "lon" => "3.7074267",
   #   "osm_id" => "45352282", "osm_type" => "way", "place_id" => "70350383"}
-  @components ~W[city city_district country country_code county postcode road state]
-  @map %{
-    "house_number" => :street_number,
-    "county" => :county,
-    "city" => :city,
-    "road" => :street,
-    "state" => :state,
-    "postcode" => :postal_code,
-    "country" => :country
-  }
-  defp geocode_location(
-         %{
-           "address" => address
-         } = response
-       ) do
-    reduce = fn {type, name}, location ->
-      struct(location, [{@map[type], name}])
-    end
-
-    location = %Geocoder.Location{
-      country_code: address["country_code"],
-      formatted_address: response["display_name"]
-    }
-
-    address
-    |> Enum.reduce(location, reduce)
-  end
-
-  defp request_all(path, params) do
-    httpoison_options = Application.get_env(:geocoder, Geocoder.Worker)[:httpoison_options] || []
-
-    case get(path, [], Keyword.merge(httpoison_options, params: Enum.into(params, %{}))) do
-      {:ok, %{status_code: 200, body: results}} ->
-        {:ok, List.wrap(results)}
-
-      {_, response} ->
-        {:error, response}
-    end
-  end
-
-  def request(path, params) do
-    request_all(path, params)
-    |> fmap(&List.first/1)
-  end
-
-  def process_url(url) do
-    @endpoint <> url
-  end
-
-  def process_response_body(body) do
-    body |> Poison.decode!()
-  end
 end

@@ -1,79 +1,15 @@
 defmodule Geocoder.Providers.GoogleMaps do
-  use HTTPoison.Base
-  use Towel
+  use Tesla
 
-  @endpoint "https://maps.googleapis.com/"
+  plug(Tesla.Middleware.BaseUrl, "https://maps.googleapis.com")
 
-  def geocode(opts) do
-    request("maps/api/geocode/json", extract_opts(opts))
-    |> fmap(&parse_geocode/1)
-  end
+  plug(Tesla.Middleware.Query,
+    key: Application.fetch_env!(:geocoder, Geocoder.Providers.GoogleMaps)[:key]
+  )
 
-  def geocode_list(opts) do
-    request_all("maps/api/geocode/json", extract_opts(opts))
-    |> fmap(fn r -> Enum.map(r, &parse_geocode/1) end)
-  end
+  plug(Tesla.Middleware.JSON)
 
-  def reverse_geocode(opts) do
-    request("maps/api/geocode/json", extract_opts(opts))
-    |> fmap(&parse_reverse_geocode/1)
-  end
-
-  def reverse_geocode_list(opts) do
-    request_all("maps/api/geocode/json", extract_opts(opts))
-    |> fmap(fn r -> Enum.map(r, &parse_reverse_geocode/1) end)
-  end
-
-  defp extract_opts(opts) do
-    opts
-    |> Keyword.take([
-      :key,
-      :address,
-      :components,
-      :bounds,
-      :language,
-      :region,
-      :latlng,
-      :placeid,
-      :result_type,
-      :location_type
-    ])
-    |> Keyword.update(:latlng, nil, fn
-      {lat, lng} -> "#{lat},#{lng}"
-      q -> q
-    end)
-    |> Keyword.delete(:latlng, nil)
-  end
-
-  defp parse_geocode(response) do
-    coords = geocode_coords(response)
-    bounds = geocode_bounds(response)
-    location = geocode_location(response)
-    %{coords | bounds: bounds, location: location}
-  end
-
-  defp parse_reverse_geocode(response) do
-    coords = geocode_coords(response)
-    location = geocode_location(response)
-    %{coords | location: location}
-  end
-
-  defp geocode_coords(%{"geometry" => %{"location" => coords}}) do
-    %{"lat" => lat, "lng" => lon} = coords
-    %Geocoder.Coords{lat: lat, lon: lon}
-  end
-
-  defp geocode_bounds(%{"geometry" => %{"bounds" => bounds}}) do
-    %{
-      "northeast" => %{"lat" => north, "lng" => east},
-      "southwest" => %{"lat" => south, "lng" => west}
-    } = bounds
-
-    %Geocoder.Bounds{top: north, right: east, bottom: south, left: west}
-  end
-
-  defp geocode_bounds(_), do: %Geocoder.Bounds{}
-
+  @path_geocode "/maps/api/geocode/json"
   @components [
     "locality",
     "administrative_area_level_1",
@@ -84,79 +20,139 @@ defmodule Geocoder.Providers.GoogleMaps do
     "street_number",
     "route"
   ]
-  @map %{
-    "street_number" => :street_number,
-    "route" => :street,
-    "street_address" => :street,
-    "locality" => :city,
+  @field_mapping %{
+    "country" => :country,
     "administrative_area_level_1" => :state,
     "administrative_area_level_2" => :county,
+    "locality" => :city,
     "postal_code" => :postal_code,
-    "country" => :country
+    "route" => :street,
+    "street_address" => :street,
+    "street_number" => :street_number
   }
-  defp geocode_location(%{
+
+  def geocode(opts) do
+    with {:ok, %Tesla.Env{status: 200, body: body}} <-
+           get(@path_geocode, query: build_request_params(opts)) |> IO.inspect() do
+      body |> transform_response()
+    else
+      _ -> :error
+    end
+  end
+
+  defdelegate reverse_geocode(opts), to: __MODULE__, as: :geocode
+
+  defp build_request_params(opts) do
+    opts
+    |> Keyword.take([
+      :key,
+      :address,
+      :latlng,
+      :components,
+      :bounds,
+      :language,
+      :region,
+      :place_id,
+      :result_type,
+      :location_type
+    ])
+    |> Keyword.update(:latlng, nil, fn
+      {lat, lng} -> "#{lat},#{lng}"
+      q -> q
+    end)
+    |> Keyword.delete(:latlng, nil)
+  end
+
+  def transform_response(%{"results" => [result | _], "status" => "OK"}) do
+    coords = retrieve_coords(result)
+    bounds = retrieve_bounds(result)
+    location = retrieve_location(result)
+
+    {:ok, %{coords | bounds: bounds, location: location}}
+  end
+
+  def transform_response(%{"results" => [], "error_message" => message})
+      when is_binary(message) do
+    {:error, message}
+  end
+
+  defp retrieve_location(%{
          "address_components" => components,
          "formatted_address" => formatted_address
        }) do
-    name = &Map.get(&1, "long_name")
-
-    type = fn component ->
-      component |> Map.get("types") |> Enum.find(&Enum.member?(@components, &1))
-    end
-
-    map = &{type.(&1), name.(&1)}
-
-    reduce = fn {type, name}, location ->
-      struct(location, [{@map[type], name}])
-    end
-
-    country =
-      Enum.find(components, fn component ->
-        component |> Map.get("types") |> Enum.member?("country")
-      end)
-
-    country_code =
-      case country do
-        nil ->
-          nil
-
-        %{"short_name" => name} ->
-          name
-      end
-
-    location = %Geocoder.Location{
-      country_code: country_code,
-      formatted_address: formatted_address
-    }
-
     components
-    |> Enum.filter(type)
-    |> Enum.map(map)
-    |> Enum.reduce(location, reduce)
+    |> Enum.filter(fn %{"types" => [type | _]} -> type in @components end)
+    |> Enum.reduce(
+      %Geocoder.Location{formatted_address: formatted_address},
+      fn
+        %{"long_name" => long_name, "short_name" => short_name, "types" => ["country" | _]},
+        acc ->
+          struct(acc, country: long_name, country_code: short_name)
+
+        %{"long_name" => long_name, "types" => [type | _]}, acc ->
+          struct(acc, [{@field_mapping[type], long_name}])
+      end
+    )
   end
 
-  defp request_all(path, params) do
-    httpoison_options = Application.get_env(:geocoder, Geocoder.Worker)[:httpoison_options] || []
-
-    case get(path, [], Keyword.merge(httpoison_options, params: Enum.into(params, %{}))) do
-      {:ok, %{status_code: 200, body: %{"results" => results}}} ->
-        {:ok, List.wrap(results)}
-
-      {_, response} ->
-        {:error, response}
-    end
+  defp retrieve_coords(%{"geometry" => %{"location" => coords}}) do
+    %{"lat" => lat, "lng" => lon} = coords
+    %Geocoder.Coords{lat: lat, lon: lon}
   end
 
-  def request(path, params) do
-    request_all(path, params)
-    |> fmap(&List.first/1)
+  defp retrieve_bounds(%{"geometry" => %{"bounds" => bounds}}) do
+    %{
+      "northeast" => %{"lat" => north, "lng" => east},
+      "southwest" => %{"lat" => south, "lng" => west}
+    } = bounds
+
+    %Geocoder.Bounds{top: north, right: east, bottom: south, left: west}
   end
 
-  def process_url(url) do
-    @endpoint <> url
-  end
+  defp retrieve_bounds(_), do: %Geocoder.Bounds{}
 
-  def process_response_body(body) do
-    body |> Poison.decode!()
-  end
+  # %{
+  #    "results" => [
+  #      %{
+  #        "address_components" => [
+  #          %{
+  #            "long_name" => "Toronto",
+  #            "short_name" => "Toronto",
+  #            "types" => ["locality", "political"]
+  #          },
+  #          %{
+  #            "long_name" => "Toronto Division",
+  #            "short_name" => "Toronto Division",
+  #            "types" => ["administrative_area_level_2", "political"]
+  #          },
+  #          %{
+  #            "long_name" => "Ontario",
+  #            "short_name" => "ON",
+  #            "types" => ["administrative_area_level_1", "political"]
+  #          },
+  #          %{
+  #            "long_name" => "Canada",
+  #            "short_name" => "CA",
+  #            "types" => ["country", "political"]
+  #          }
+  #        ],
+  #        "formatted_address" => "Toronto, ON, Canada",
+  #        "geometry" => %{
+  #          "bounds" => %{
+  #            "northeast" => %{"lat" => 43.8554579, "lng" => -79.1168971},
+  #            "southwest" => %{"lat" => 43.5810245, "lng" => -79.639219}
+  #          },
+  #          "location" => %{"lat" => 43.653226, "lng" => -79.3831843},
+  #          "location_type" => "APPROXIMATE",
+  #          "viewport" => %{
+  #            "northeast" => %{"lat" => 43.8554579, "lng" => -79.1168971},
+  #            "southwest" => %{"lat" => 43.5810245, "lng" => -79.639219}
+  #          }
+  #        },
+  #        "place_id" => "ChIJpTvG15DL1IkRd8S0KlBVNTI",
+  #        "types" => ["locality", "political"]
+  #      }
+  #    ],
+  #    "status" => "OK"
+  #  }
 end

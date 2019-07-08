@@ -31,14 +31,14 @@ defmodule Geocoder.Mixfile do
   end
 
   def application do
-    [applications: [:logger, :poolboy, :httpoison, :geohash], mod: {Geocoder, []}]
+    [applications: [:logger, :poolboy, :geohash], mod: {Geocoder, []}]
   end
 
   defp deps do
     [
-      {:httpoison, "~> 1.5"},
-      {:poison, "~> 3.1"},
-      {:towel, "~> 0.2"},
+      {:tesla, "~> 1.2.1"},
+      {:hackney, "~> 1.15.0"},
+      {:jason, ">= 1.0.0"},
       {:poolboy, "~> 1.5"},
       {:geohash, "~> 1.2"},
       {:ex_doc, "~> 0.20.0", only: :dev},
