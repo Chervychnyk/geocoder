@@ -33,7 +33,7 @@ defmodule Geocoder.Providers.GoogleMaps do
 
   def geocode(opts) do
     with {:ok, %Tesla.Env{status: 200, body: body}} <-
-           get(@path_geocode, query: build_request_params(opts)) |> IO.inspect() do
+           get(@path_geocode, query: build_request_params(opts)) do
       body |> transform_response()
     else
       _ -> :error
