@@ -68,10 +68,8 @@ defmodule Geocoder.Worker do
   end
 
   def run(function, conf, q, false) do
-    with {:ok, %Geocoder.Coords{} = coords} = result <-
-           apply(conf[:provider], function, [additionnal_conf(q, conf)]),
-         _ <- conf[:store].update(coords),
-         _ <- conf[:store].link(q, coords) do
+    with {:ok, %Geocoder.Coords{}} = result <-
+           apply(conf[:provider], function, [additionnal_conf(q, conf)]) do
       result
     else
       _ -> :nothing
