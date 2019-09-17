@@ -25,8 +25,8 @@ defmodule Geocoder.Mixfile do
   def package do
     [
       licenses: ["MIT"],
-      maintainers: ["Kash Nouroozi", "Arjan Scherpenisse"],
-      links: %{"GitHub" => "https://github.com/knrz/geocoder"}
+      maintainers: ["Artem Chervychnyk"],
+      links: %{"GitHub" => "https://github.com/Chervychnyk/geocoder"}
     ]
   end
 
@@ -41,6 +41,7 @@ defmodule Geocoder.Mixfile do
       {:jason, ">= 1.0.0"},
       {:poolboy, "~> 1.5"},
       {:geohash, "~> 1.2"},
+      {:nebulex, "~> 1.1"},
       {:ex_doc, "~> 0.20.0", only: :dev},
       {:inch_ex, ">= 0.0.0", only: :docs},
       {:excoveralls, "~> 0.6.3", only: :test}

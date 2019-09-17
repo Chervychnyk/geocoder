@@ -20,7 +20,7 @@ defmodule Geocoder.Worker do
 
   # GenServer API
   @worker_defaults [
-    store: Geocoder.Store,
+    cache: Geocoder.Cache,
     # or OpenStreetMaps
     provider: Geocoder.Providers.GoogleMaps
   ]
@@ -33,12 +33,12 @@ defmodule Geocoder.Worker do
   end
 
   def handle_call({function, q, opts}, _from, conf) do
-    {:reply, run(function, q, conf, opts[:store]), conf}
+    {:reply, run(function, q, conf, opts[:use_cache]), conf}
   end
 
   def handle_cast({function, q, opts}, conf) do
     Task.start_link(fn ->
-      send(opts[:stream_to], run(function, conf, q, opts[:store]))
+      send(opts[:stream_to], run(function, conf, q, opts[:cache]))
     end)
 
     {:noreply, conf}
@@ -48,7 +48,7 @@ defmodule Geocoder.Worker do
   @assign_defaults [
     timeout: 5000,
     stream_to: nil,
-    store: true
+    use_cache: true
   ]
 
   defp assign(name, q, opts) do
@@ -67,9 +67,10 @@ defmodule Geocoder.Worker do
     apply(conf[:provider], function, [additionnal_conf(q, conf)])
   end
 
-  def run(function, conf, q, false) do
-    with {:ok, %Geocoder.Coords{}} = result <-
-           apply(conf[:provider], function, [additionnal_conf(q, conf)]) do
+  def run(function, q, conf, false) do
+    with {:ok, %Geocoder.Coords{} = coords} = result <-
+           apply(conf[:provider], function, [additionnal_conf(q, conf)]),
+         _ <- conf[:cache].link(q, coords) do
       result
     else
       _ -> :nothing
@@ -77,16 +78,16 @@ defmodule Geocoder.Worker do
   end
 
   def run(function, q, conf, true) do
-    case apply(conf[:store], function, [additionnal_conf(q, conf)]) do
+    case apply(conf[:cache], function, [additionnal_conf(q, conf)]) do
       {:just, coords} ->
         {:ok, coords}
 
       :nothing ->
-        run(function, conf, q, false)
+        run(function, q, conf, false)
     end
   end
 
   def additionnal_conf(q, conf) do
-    Keyword.merge(q, Keyword.drop(conf, [:store, :provider]))
+    Keyword.merge(q, Keyword.drop(conf, [:cache, :provider]))
   end
 end

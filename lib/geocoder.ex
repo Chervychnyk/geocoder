@@ -10,10 +10,6 @@ defmodule Geocoder do
     Keyword.merge(Application.get_env(:geocoder, Geocoder.Worker) || [], @default_config)
   end
 
-  def store_config do
-    Application.get_env(:geocoder, Geocoder.Store) || []
-  end
-
   def start(_type, _opts) do
     import Supervisor.Spec
 
@@ -23,7 +19,7 @@ defmodule Geocoder do
         worker_config(),
         Application.get_env(:geocoder, :worker) || []
       ),
-      worker(Geocoder.Store, [store_config()])
+      worker(Geocoder.Cache, [])
     ]
 
     options = [
