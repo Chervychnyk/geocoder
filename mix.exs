@@ -31,7 +31,11 @@ defmodule Geocoder.Mixfile do
   end
 
   def application do
-    [applications: [:logger, :poolboy, :geohash], mod: {Geocoder, []}]
+    [
+      mod: {Geocoder, []},
+      extra_applications: [:logger, :poolboy, :geohash],
+      include_applications: [:nebulex]
+    ]
   end
 
   defp deps do
