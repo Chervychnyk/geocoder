@@ -17,7 +17,7 @@ defmodule Geocoder do
         worker_config(),
         Application.get_env(:geocoder, :worker) || []
       ),
-      Geocoder.Cache
+      {Geocoder.Cache, []}
     ]
 
     options = [
