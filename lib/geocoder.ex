@@ -11,15 +11,13 @@ defmodule Geocoder do
   end
 
   def start(_type, _opts) do
-    import Supervisor.Spec
-
     children = [
       :poolboy.child_spec(
         pool_name(),
         worker_config(),
         Application.get_env(:geocoder, :worker) || []
       ),
-      worker(Geocoder.Cache, [])
+      Geocoder.Cache
     ]
 
     options = [
