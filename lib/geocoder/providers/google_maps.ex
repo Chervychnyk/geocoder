@@ -71,6 +71,10 @@ defmodule Geocoder.Providers.GoogleMaps do
     {:ok, %{coords | bounds: bounds, location: location}}
   end
 
+  def transform_response(%{"results" => [], "status" => "ZERO_RESULTS"}) do
+    {:ok, nil}
+  end
+
   def transform_response(%{"results" => [], "error_message" => message})
       when is_binary(message) do
     {:error, message}
