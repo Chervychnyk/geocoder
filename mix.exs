@@ -41,7 +41,7 @@ defmodule Geocoder.Mixfile do
   defp deps do
     [
       {:tesla, "~> 1.2.1"},
-      {:hackney, "~> 1.15.0"},
+      {:hackney, "~> 1.16"},
       {:jason, ">= 1.0.0"},
       {:poolboy, "~> 1.5"},
       {:geohash, "~> 1.2"},
