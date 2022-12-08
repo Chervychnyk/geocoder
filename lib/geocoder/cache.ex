@@ -11,7 +11,7 @@ defmodule Geocoder.Cache do
     location_key = encode(location)
 
     with latlng_key when is_binary(latlng_key) <- get(location_key),
-         %Geocoder.Coords{} = coords <- get(latlng) do
+         %Geocoder.Coords{} = coords <- get(latlng_key) do
       {:just, coords}
     else
       _ -> :nothing
