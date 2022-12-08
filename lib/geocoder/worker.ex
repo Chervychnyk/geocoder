@@ -70,7 +70,7 @@ defmodule Geocoder.Worker do
   def run(function, q, conf, false) do
     with {:ok, %Geocoder.Coords{} = coords} = result <-
            apply(conf[:provider], function, [additionnal_conf(q, conf)]),
-         _ <- conf[:cache].link(q, coords) do
+         _ <- conf[:cache].store(q, coords) do
       result
     else
       _ -> :nothing
